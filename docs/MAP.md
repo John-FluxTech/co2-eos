@@ -137,6 +137,31 @@ _Validate the redesigned core: round-trip, properties, seed/iteration count._
 - properties()  ·L33
 - main()  ·L48
 
+### bench/validate_fastpath.py
+_Validation harness: the fast (ρ, u) path vs an independent reference chain._
+- _T_from_rho_u_ref(rho, u)  ·L45 — To-convergence Newton on the oracle u(T, ρ); crude seed, no table.
+- const _A0  ·L66
+- const _RF_B  ·L69
+- const _RF_T  ·L71
+- const _LAM0_L  ·L72
+- const _LAM_B  ·L73
+- const _M  ·L77
+- const _R_MOLAR  ·L78
+- const _RHOC_MOLAR  ·L79
+- const _PC  ·L80
+- const _TT_TRIPLE  ·L81
+- const _RHO_TL  ·L82
+- const _ETA_TL  ·L83
+- _visc_ref(T, rho)  ·L86
+- _cond_ref(T, rho, mu)  ·L104
+- reference_state(rho, u)  ·L143 — Full reference state dict at scalar (ρ, u) from the oracle chain.
+- reference_derivs(rho, u, qname)  ·L164
+- envelope_single_phase(n, seed=17)  ·L188
+- const QUANTITIES  ·L210
+- rel(a, b, floor)  ·L214
+- const FLOORS  ·L221
+- main()  ·L226
+
 ### co2_eos/__init__.py
 _CO2-EOS: Differentiable CO₂ thermodynamic properties in JAX._
 - const LIQUID  ·L58
@@ -456,6 +481,15 @@ _Tests for two-phase dome detection in state_from_Ph._
   - test_jvp_finite_inside_dome(self, dome_data)  ·L177 — JVP returns finite tangents for a point inside the dome.
 - class TestDomeSupercriticalBypass  ·L191 — At supercritical P, dome detection should not activate.
   - test_supercritical_unchanged(self)  ·L194 — state_from_Ph at P > PC should behave exactly as before.
+
+### tests/test_fastpath_validation.py
+_The economized (ρ, u) fast path must match the independent oracle chain._
+- const _REPO  ·L24
+- @pytest.fixture envelope()  ·L32
+- test_properties_vs_oracle(envelope)  ·L37 — Every property ≤ 5e-10 rel vs the independent chain (measured ~1e-10).
+- test_derivatives_vs_ift_oracle(envelope)  ·L47 — d(q)/d(ρ,u), forward and reverse, ≤ 1e-9 vs IFT-oracle references.
+- test_chi_ref_cheb_matches_exact_bundle()  ·L72 — The precomputed Chebyshev equals the exact bundle at τ_ref ≤ 5e-12.
+- test_inversion_roundoff_at_three_iterations(envelope)  ·L87 — 3 fixed Newton steps from the v2 seed reach ≤ 1e-11 K single-phase.
 
 ### tests/test_inversion_gradients.py
 _Forward-mode (jvp) and reverse-mode (grad/vjp) gradients through every inversion._
