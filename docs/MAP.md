@@ -155,29 +155,58 @@ _CO2-EOS: Differentiable CO₂ thermodynamic properties in JAX._
 
 ### co2_eos/core.py
 _Redesigned high-performance EOS core — analytic derivatives, fused passes._
-- const _NEWTON_ITERS  ·L45
-- const _T_MIN  ·L46
-- const _T_MAX  ·L47
-- const _SEED_PATH  ·L58
-- const _HAVE_SEED  ·L62
-- _seed_T(rho, u)  ·L75 — Initial T guess for the (ρ, u) inversion via the bilinear table.
-- _thermo(T, rho)  ·L97 — All eight Helmholtz-derived properties at scalar (T, ρ).
-- _u_and_cv(T, rho)  ·L128 — Internal energy u [J/kg] and Cv [J/(kg·K)] at scalar (T, ρ).
-- _solve_T(rho, u)  ·L147 — Fixed-iteration Newton solve for T given (ρ, u). Scalar.
-- @jax.custom_jvp _temperature_from_Du(rho, u, phase_hint)  ·L172 — T such that u(T, ρ) = u_target at fixed ρ. Scalar. (phase_hint unused.)
-- @_temperature_from_Du.defjvp _temperature_from_Du_jvp(primals, tangents)  ·L178 — dT = (du − (∂u/∂ρ)·dρ) / Cv, with Cv and ∂u/∂ρ analytic.
-- _state_from_T_rho(T, rho)  ·L204 — Scalar fused state at (T, ρ): every thermo + transport property.
-- _state_from_rho_u(rho, u, phase_hint)  ·L236 — Scalar fused state from (ρ, u): solve T once, derive everything.
+- const _NEWTON_ITERS_TABLE  ·L48
+- const _NEWTON_ITERS_AFFINE  ·L49
+- const _T_MIN  ·L50
+- const _T_MAX  ·L51
+- const _SEED_PATH  ·L62
+- const _HAVE_SEED  ·L66
+- _seed_T(rho, u)  ·L91 — Initial T guess for the (ρ, u) inversion via the bilinear table.
+- _thermo(T, rho)  ·L122 — All eight Helmholtz-derived properties at scalar (T, ρ).
+- _u_and_cv(T, rho)  ·L153 — Internal energy u [J/kg] and Cv [J/(kg·K)] at scalar (T, ρ).
+- _solve_T(rho, u)  ·L172 — Fixed-iteration Newton solve for T given (ρ, u). Scalar.
+- @jax.custom_jvp _temperature_from_Du(rho, u, phase_hint)  ·L198 — T such that u(T, ρ) = u_target at fixed ρ. Scalar. (phase_hint unused.)
+- @_temperature_from_Du.defjvp _temperature_from_Du_jvp(primals, tangents)  ·L204 — dT = (du − (∂u/∂ρ)·dρ) / Cv, with Cv and ∂u/∂ρ analytic.
+- _state_from_T_rho(T, rho)  ·L230 — Scalar fused state at (T, ρ): every thermo + transport property.
+- _state_from_rho_u(rho, u, phase_hint)  ·L262 — Scalar fused state from (ρ, u): solve T once, derive everything.
 
 ### co2_eos/helmholtz.py
 _Span-Wagner (1996) reduced Helmholtz energy with hand-coded analytic_
-- const _NA_P  ·L41
-- ideal_derivs(tau, delta)  ·L48 — Return (α⁰, α⁰_τ, α⁰_ττ) at scalar (τ, δ).
-- ideal_tau_only(tau)  ·L74 — Return (α⁰_τ, α⁰_ττ) — the only ideal quantities the Newton needs.
-- residual_derivs(tau, delta)  ·L93 — Return (αʳ, αʳ_δ, αʳ_τ, αʳ_δδ, αʳ_ττ, αʳ_δτ) at scalar (τ, δ).
-- residual_tau_prep(delta)  ·L220 — Precompute the δ-invariant envelopes for the τ-derivative inner loop.
-- residual_tau_fast(tau, dstate)  ·L244 — Return (αʳ_τ, αʳ_ττ) from precomputed δ-state ``dstate``.
-- residual_tau_derivs(tau, delta)  ·L288 — Return (αʳ_τ, αʳ_ττ) — the residual quantities the Newton needs.
+- const _PN  ·L50
+- const _PD  ·L51
+- const _PT  ·L52
+- const _PL  ·L53
+- const _GN  ·L55
+- const _GD  ·L56
+- const _GT  ·L57
+- const _GETA  ·L58
+- const _GBETA  ·L59
+- const _GGAMMA  ·L60
+- const _NAN  ·L62
+- const _NAA  ·L63
+- const _NAB  ·L64
+- const _NABIGB  ·L65
+- const _NABIGC  ·L66
+- const _NA_P_SCALAR  ·L74
+- const _NA_BIGA_SCALAR  ·L76
+- const _NA_BIGD_SCALAR  ·L78
+- const _NA_P  ·L85
+- const _TPOLY  ·L89
+- const _TP_IDX  ·L90
+- const _TALL  ·L91
+- const _W_T  ·L92
+- const _W_TT  ·L93
+- _tau_ladder(tau)  ·L96 — All distinct τ^t needed by the terms, via 2 sqrts + multiplies.
+- _delta_ladder(delta, dmax=10)  ·L128 — δ^0..δ^dmax by successive multiplication.
+- _exp_envelopes(dp)  ·L136 — The six distinct exponential envelopes E_l = exp(-δ^l), l = 0..6.
+- ideal_derivs(tau, delta)  ·L148 — Return (α⁰, α⁰_τ, α⁰_ττ) at scalar (τ, δ).
+- ideal_tau_only(tau)  ·L174 — Return (α⁰_τ, α⁰_ττ) — the only ideal quantities the Newton needs.
+- _pow78(Db)  ·L193 — Db^(7/8) by three sqrts and three multiplies (Db ≥ 1e-300 guarded).
+- _na_delta_state(delta)  ·L201 — δ-side quantities of the non-analytic terms (loop-invariant at fixed ρ).
+- residual_derivs(tau, delta)  ·L226 — Return (αʳ, αʳ_δ, αʳ_τ, αʳ_δδ, αʳ_ττ, αʳ_δτ) at scalar (τ, δ).
+- residual_tau_prep(delta)  ·L353 — Precompute the δ-invariant state for the τ-derivative inner loop.
+- residual_tau_fast(tau, dstate)  ·L377 — Return (αʳ_τ, αʳ_ττ) from precomputed δ-state ``dstate``.
+- residual_tau_derivs(tau, delta)  ·L443 — Return (αʳ_τ, αʳ_ττ) — the residual quantities the Newton needs.
 
 ### co2_eos/inversions.py
 _Thermodynamic inversions — pure JAX, JIT-compilable, vmappable,_
@@ -298,48 +327,51 @@ _Span-Wagner (1996) equation of state for CO₂ — pure JAX implementation._
 
 ### co2_eos/transport.py
 _CO₂ transport property correlations — pure JAX implementation._
-- const TC  ·L18
-- const RHOC_MOLAR  ·L19
-- const M  ·L20
-- const R_MOLAR  ·L21
-- const PC  ·L22
-- const RHOC_MASS  ·L23
-- const _ETA0_A  ·L40
-- _eta_dilute(T)  ·L51 — Dilute-gas viscosity η₀(T) [Pa·s].
-- const _EPSILON_OVER_K  ·L65
-- const _SIGMA  ·L66
-- const _NA  ·L67
-- const _RF_B  ·L69
-- const _RF_T  ·L73
-- _eta_initial(T, rho_molar, eta0)  ·L76 — Initial-density viscosity contribution [Pa·s].
-- const _TT  ·L88
-- const _RHO_TL  ·L89
-- const _C1  ·L90
-- const _C2  ·L91
-- const _GAMMA_VISC  ·L92
-- const _ETA_TL  ·L95
-- _eta_residual(T, rho_mass)  ·L100 — Higher-order viscosity contribution [Pa·s].
-- _scalar_viscosity(T, rho)  ·L110 — Dynamic viscosity μ [Pa·s] at scalar (T, ρ [kg/m³]).
-- const _LAM0_L  ·L124
-- _lambda_dilute(T)  ·L127 — Dilute-gas thermal conductivity λ₀(T) [W/(m·K)].
-- const _LAM_RES_B  ·L136
-- const _LAM_RES_D  ·L140
-- const _LAM_RES_T  ·L141
-- const _RHOMASS_REDUCING  ·L143
-- _lambda_residual(T, rho)  ·L146 — Residual thermal conductivity [W/(m·K)].
-- const _KB  ·L154
-- const _R0  ·L155
-- const _GAMMA_CE  ·L156
-- const _GAMMA_EXP  ·L157
-- const _NU  ·L158
-- const _ZETA0  ·L159
-- const _QD  ·L160
-- const _T_REF  ·L161
-- _lambda_critical_shared(T, rho, mu, alr_d, alr_dd, alr_tt, alr_dt, al0_tt)  ·L164 — Critical enhancement of thermal conductivity [W/(m·K)].
-- _thermal_conductivity_shared(T, rho, mu, alr_d, alr_dd, alr_tt, alr_dt, al0_tt)  ·L232 — λ [W/(m·K)] reusing reduced derivatives already computed at (T, ρ).
-- _scalar_thermal_conductivity(T, rho)  ·L246 — Thermal conductivity λ [W/(m·K)] at scalar (T, ρ [kg/m³]).
-- @jax.jit viscosity(T, rho)  ·L262 — Dynamic viscosity μ [Pa·s]. Batched over leading axis.
-- @jax.jit thermal_conductivity(T, rho)  ·L276 — Thermal conductivity λ [W/(m·K)]. Batched over leading axis.
+- const TC  ·L21
+- const RHOC_MOLAR  ·L22
+- const M  ·L23
+- const R_MOLAR  ·L24
+- const PC  ·L25
+- const RHOC_MASS  ·L26
+- const _ETA0_A  ·L43
+- _eta_dilute(T)  ·L54 — Dilute-gas viscosity η₀(T) [Pa·s].
+- const _EPSILON_OVER_K  ·L72
+- const _SIGMA  ·L73
+- const _NA  ·L74
+- const _RF_B  ·L76
+- const _RF_T  ·L80
+- _eta_initial(T, rho_molar, eta0)  ·L83 — Initial-density viscosity contribution [Pa·s].
+- const _TT  ·L106
+- const _RHO_TL  ·L107
+- const _C1  ·L108
+- const _C2  ·L109
+- const _GAMMA_VISC  ·L110
+- const _ETA_TL  ·L113
+- _eta_residual(T, rho_mass)  ·L118 — Higher-order viscosity contribution [Pa·s].
+- _scalar_viscosity(T, rho)  ·L129 — Dynamic viscosity μ [Pa·s] at scalar (T, ρ [kg/m³]).
+- const _LAM0_L  ·L143
+- _lambda_dilute(T)  ·L146 — Dilute-gas thermal conductivity λ₀(T) [W/(m·K)].
+- const _LAM_RES_B  ·L156
+- const _LAM_RES_D  ·L160
+- const _LAM_RES_T  ·L161
+- const _RHOMASS_REDUCING  ·L163
+- _lambda_residual(T, rho)  ·L166 — Residual thermal conductivity [W/(m·K)].
+- const _KB  ·L183
+- const _R0  ·L184
+- const _GAMMA_CE  ·L185
+- const _GAMMA_EXP  ·L186
+- const _NU  ·L187
+- const _ZETA0  ·L188
+- const _QD  ·L189
+- const _T_REF  ·L190
+- const _CHI_PATH  ·L198
+- const _HAVE_CHI_CHEB  ·L199
+- _dpdrho_ref_reduced(delta)  ·L214 — 1 + 2δ·αʳ_δ + δ²·αʳ_δδ at T_ref: Chebyshev-Clenshaw (or exact fallback).
+- _lambda_critical_shared(T, rho, mu, alr_d, alr_dd, alr_tt, alr_dt, al0_tt)  ·L233 — Critical enhancement of thermal conductivity [W/(m·K)].
+- _thermal_conductivity_shared(T, rho, mu, alr_d, alr_dd, alr_tt, alr_dt, al0_tt)  ·L298 — λ [W/(m·K)] reusing reduced derivatives already computed at (T, ρ).
+- _scalar_thermal_conductivity(T, rho)  ·L312 — Thermal conductivity λ [W/(m·K)] at scalar (T, ρ [kg/m³]).
+- @jax.jit viscosity(T, rho)  ·L328 — Dynamic viscosity μ [Pa·s]. Batched over leading axis.
+- @jax.jit thermal_conductivity(T, rho)  ·L342 — Thermal conductivity λ [W/(m·K)]. Batched over leading axis.
 
 ### examples/readme_check.py
 _Run every Python snippet from README.md and print results._
@@ -350,6 +382,14 @@ _Run every Python snippet from README.md and print results._
 - block_jax_vmap()  ·L72
 - block_dir_check()  ·L87
 - main()  ·L103
+
+### scripts/generate_chi_ref_table.py
+_Generate the chi_ref Chebyshev table for the thermal-conductivity_
+- const T_REF  ·L30
+- const DEGREE  ·L32
+- const OUT  ·L34
+- f_exact(delta)  ·L37
+- main()  ·L43
 
 ### scripts/generate_saturation_table.py
 _Generate CO2 saturation table from Span-Wagner EOS._
@@ -370,7 +410,7 @@ _Generate the (ρ, u) → T Newton seed table for the inversion hot path._
 - const OUT  ·L42
 - _u_cv(T, rho)  ·L45
 - _solve_T(rho, u)  ·L49 — Robust offline solve: damped Newton from the supercritical side.
-- main()  ·L61
+- main()  ·L67
 
 ### tests/__init__.py
 - _(no top-level symbols)_

@@ -35,9 +35,9 @@ from co2_eos import core
 from co2_eos import saturation as sat
 from co2_eos.span_wagner import T_TRIPLE, TC
 
-RHO_LO, RHO_HI, NRHO = 60.0, 1050.0, 128
+RHO_LO, RHO_HI, NRHO = 60.0, 1050.0, 256
 T_LO, T_HI = 255.0, 345.0
-NU = 256
+NU = 512
 
 OUT = Path(__file__).resolve().parents[1] / "co2_eos" / "data" / "seed_table.npz"
 
@@ -47,14 +47,20 @@ def _u_cv(T, rho):
 
 
 def _solve_T(rho, u):
-    """Robust offline solve: damped Newton from the supercritical side."""
+    """Robust offline solve: damped Newton from the supercritical side.
+
+    Also returns the final residual and Cv so nodes where the solve is not a
+    converged, stable single-phase root can be flagged and filled.
+    """
     def one(rho, u):
         def step(_, T):
             fu, cv = core._u_and_cv(T, rho)
             cv = jnp.where(jnp.abs(cv) > 1e-30, cv, 1e-30)
             dT = jnp.clip((fu - u) / cv, -40.0, 40.0)   # damp to stay stable
             return jnp.clip(T - dT, T_LO, T_HI)
-        return jax.lax.fori_loop(0, 80, step, jnp.float64(320.0))
+        T = jax.lax.fori_loop(0, 80, step, jnp.float64(320.0))
+        fu, cv = core._u_and_cv(T, rho)
+        return T, fu - u, cv
     return jax.jit(jax.vmap(one))(rho, u)
 
 
@@ -79,15 +85,34 @@ def main():
     u_grid = np.linspace(u_lo, u_hi, NU)
 
     RR, UU = np.meshgrid(rho_grid, u_grid, indexing="ij")
-    T0 = np.asarray(_solve_T(jnp.asarray(RR.ravel()),
-                             jnp.asarray(UU.ravel()))).reshape(NRHO, NU)
+    T0, resid, cv = _solve_T(jnp.asarray(RR.ravel()), jnp.asarray(UU.ravel()))
+    T0 = np.array(T0).reshape(NRHO, NU)
+
+    # Dome-safe fill: nodes whose solve did not converge to a stable
+    # single-phase root (dome interior: u(T) non-monotone, Cv <= 0) would
+    # poison the bilinear cells that straddle the dome boundary.  Replace them
+    # by 1-D interpolation along the u-axis — the dome is a u-interval at
+    # fixed rho, so the fill is smooth, and those nodes never seed a real
+    # single-phase query (the seed is a convergence accelerator only).
+    bad = ((np.abs(np.array(resid)) > 1.0) | (np.array(cv) <= 0.0)
+           ).reshape(NRHO, NU)
+    print(f"  dome/unconverged nodes filled: {bad.sum()} of {bad.size}")
+    for i in range(NRHO):
+        b = bad[i]
+        if b.any() and (~b).any():
+            T0[i, b] = np.interp(u_grid[b], u_grid[~b], T0[i, ~b])
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
+    # The T0 table is stored float32: it is a Newton SEED only (the polish
+    # sets accuracy), f32 quantization adds ~3e-5 K to a seed whose bilinear
+    # interpolation error is orders larger — and the halved footprint keeps
+    # the embedded constant below the XLA:CPU size threshold above which
+    # gathers are dispatched to the parallel executor (~25 us/call overhead).
     np.savez(
         OUT,
         rho_grid=rho_grid.astype(np.float64),
         u_grid=u_grid.astype(np.float64),
-        T0_table=T0.astype(np.float64),
+        T0_table=T0.astype(np.float32),
     )
     print(f"wrote {OUT}")
     print(f"  grid: {NRHO} ρ × {NU} u  over ρ[{RHO_LO},{RHO_HI}] T[{T_LO},{T_HI}]")

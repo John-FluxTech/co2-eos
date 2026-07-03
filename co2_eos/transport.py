@@ -7,8 +7,11 @@ Coefficients cross-referenced against CoolProp's CarbonDioxide.json and
 TransportRoutines.cpp.  CoolProp is never imported here.
 """
 
+from pathlib import Path
+
 import jax
 import jax.numpy as jnp
+import numpy as np
 from functools import partial
 
 jax.config.update("jax_enable_x64", True)
@@ -49,16 +52,20 @@ _ETA0_A = jnp.array([
 
 
 def _eta_dilute(T):
-    """Dilute-gas viscosity η₀(T) [Pa·s]."""
+    """Dilute-gas viscosity η₀(T) [Pa·s].
+
+    One pow: T^(1/6); then T^(1/3) and √T follow by multiplication.
+    """
     a = _ETA0_A
     T_sixth = T ** (1.0 / 6.0)
-    T_third = T ** (1.0 / 3.0)
+    T_third = T_sixth * T_sixth
+    sqrt_T = T_third * T_sixth
     den = (a[0]
            + a[1] * T_sixth
            + a[2] * jnp.exp(a[3] * T_third)
-           + (a[4] + a[5] * T_third) / jnp.exp(T_third)
-           + a[6] * jnp.sqrt(T))
-    return 0.0010055 * jnp.sqrt(T) / den
+           + (a[4] + a[5] * T_third) * jnp.exp(-T_third)
+           + a[6] * sqrt_T)
+    return 0.0010055 * sqrt_T / den
 
 
 # ── Initial density dependence (Rainwater-Friend) ────────────────────────
@@ -76,10 +83,21 @@ _RF_T = jnp.array([0.0, -0.25, -0.5, -0.75, -1.0, -1.25, -1.5, -2.5, -5.5])
 def _eta_initial(T, rho_molar, eta0):
     """Initial-density viscosity contribution [Pa·s].
 
-    η_initial = η₀ · B_η · ρ_molar
+    η_initial = η₀ · B_η · ρ_molar.  The Rainwater-Friend exponents are all
+    multiples of -¼, so every T*^t comes from y = T*^(-¼) (two sqrts and a
+    reciprocal) by a multiply ladder — no pow calls.
     """
     T_star = T / _EPSILON_OVER_K
-    B_eta_star = jnp.sum(_RF_B * T_star ** _RF_T)
+    y = 1.0 / jnp.sqrt(jnp.sqrt(T_star))     # T*^(-1/4)
+    y2 = y * y
+    y4 = y2 * y2                              # T*^(-1)
+    y6 = y4 * y2
+    y10 = y6 * y4
+    y22 = y10 * y10 * y2
+    b = _RF_B
+    # exponents: 0, -.25, -.5, -.75, -1, -1.25, -1.5, -2.5, -5.5
+    B_eta_star = (b[0] + b[1] * y + b[2] * y2 + b[3] * y2 * y + b[4] * y4
+                  + b[5] * y4 * y + b[6] * y6 + b[7] * y10 + b[8] * y22)
     B_eta = _NA * _SIGMA ** 3 * B_eta_star  # m³/mol
     return eta0 * B_eta * rho_molar
 
@@ -101,8 +119,9 @@ def _eta_residual(T, rho_mass):
     """Higher-order viscosity contribution [Pa·s]."""
     Tr = T / _TT
     rhor = rho_mass / _RHO_TL
-    return _ETA_TL * (_C1 * Tr * rhor ** 3
-                      + (rhor ** 2 + rhor ** _GAMMA_VISC) / (Tr - _C2))
+    rhor2 = rhor * rhor
+    return _ETA_TL * (_C1 * Tr * rhor2 * rhor
+                      + (rhor2 + rhor ** _GAMMA_VISC) / (Tr - _C2))
 
 
 # ── Scalar viscosity ─────────────────────────────────────────────────────
@@ -127,9 +146,10 @@ _LAM0_L = jnp.array([0.0151874307, 0.0280674040, 0.0228564190, -0.00741624210])
 def _lambda_dilute(T):
     """Dilute-gas thermal conductivity λ₀(T) [W/(m·K)]."""
     tau = TC / T
+    tau2 = tau * tau
     poly = (_LAM0_L[0] + _LAM0_L[1] * tau
-            + _LAM0_L[2] * tau ** 2 + _LAM0_L[3] * tau ** 3)
-    return tau ** (-0.5) / poly / 1000.0  # mW → W
+            + _LAM0_L[2] * tau2 + _LAM0_L[3] * tau2 * tau)
+    return 1.0 / (jnp.sqrt(tau) * poly) / 1000.0  # mW → W
 
 
 # ── Residual λ_res(T, ρ) — polynomial ────────────────────────────────────
@@ -144,10 +164,19 @@ _RHOMASS_REDUCING = 467.6  # kg/m³ (same as RHOC_MASS)
 
 
 def _lambda_residual(T, rho):
-    """Residual thermal conductivity [W/(m·K)]."""
-    tau = TC / T
+    """Residual thermal conductivity [W/(m·K)].
+
+    Σ b_k · δ^{1..6} · (1 or 1/τ): a δ multiply ladder, no pow calls.
+    """
+    inv_tau = T / TC
     delta = rho / _RHOMASS_REDUCING
-    return jnp.sum(_LAM_RES_B * delta ** _LAM_RES_D * tau ** _LAM_RES_T)
+    b = _LAM_RES_B
+    out = 0.0
+    dk = delta
+    for k in range(6):
+        out += (b[k] + b[k + 6] * inv_tau) * dk
+        dk = dk * delta
+    return out
 
 
 # ── Critical enhancement — simplified Olchowy-Sengers ────────────────────
@@ -159,6 +188,46 @@ _NU = 0.63             # universal critical exponent ν
 _ZETA0 = 1.5e-10       # m
 _QD = 2.5e9            # 1/m
 _T_REF = 456.19        # K
+
+# The enhancement needs dp/dρ at the fixed reference temperature — a smooth
+# function of δ alone.  A precomputed degree-100 Chebyshev fit (3e-13 max rel
+# error over δ ∈ [0, 2.75]; scripts/generate_chi_ref_table.py) replaces the
+# full residual bundle at τ_ref.  Tolerant of a missing file so the generator
+# script can import this package to BUILD the table — the exact bundle is the
+# fallback, so the fallback changes speed only, never values.
+_CHI_PATH = Path(__file__).parent / "data" / "chi_ref_cheb.npz"
+_HAVE_CHI_CHEB = False
+try:
+    _chi = np.load(_CHI_PATH)
+    _CHI_COEFS = jnp.asarray(_chi["coefs"])
+    _CHI_LO = float(_chi["delta_lo"])
+    _CHI_HI = float(_chi["delta_hi"])
+    if float(_chi["t_ref"]) != _T_REF:
+        raise ValueError(
+            f"chi_ref_cheb.npz was generated for T_ref={float(_chi['t_ref'])},"
+            f" transport uses {_T_REF} — regenerate the table")
+    _HAVE_CHI_CHEB = True
+except FileNotFoundError:
+    pass
+
+
+def _dpdrho_ref_reduced(delta):
+    """1 + 2δ·αʳ_δ + δ²·αʳ_δδ at T_ref: Chebyshev-Clenshaw (or exact fallback).
+
+    Queries are clamped to the fit box; beyond δ = 2.75 the enhancement is
+    zero anyway (χ − χ_ref < 0 there).
+    """
+    if not _HAVE_CHI_CHEB:
+        tau_ref = TC / _T_REF
+        _, ar_d, _, ar_dd, _, _ = _hz.residual_derivs(tau_ref, delta)
+        return 1.0 + 2.0 * delta * ar_d + delta * delta * ar_dd
+    x = jnp.clip((2.0 * delta - (_CHI_LO + _CHI_HI)) / (_CHI_HI - _CHI_LO),
+                 -1.0, 1.0)
+    b1 = jnp.zeros_like(delta)
+    b2 = jnp.zeros_like(delta)
+    for c in np.asarray(_CHI_COEFS)[:0:-1]:
+        b1, b2 = 2.0 * x * b1 - b2 + float(c), b1
+    return x * b1 - b2 + float(np.asarray(_CHI_COEFS)[0])
 
 
 def _lambda_critical_shared(T, rho, mu, alr_d, alr_dd, alr_tt, alr_dt, al0_tt):
@@ -181,11 +250,8 @@ def _lambda_critical_shared(T, rho, mu, alr_d, alr_dd, alr_tt, alr_dt, al0_tt):
                                   + delta ** 2 * alr_dd)
     chi = PC / RHOC_MOLAR ** 2 * rho_molar / dp_drho_mol
 
-    # ── dp/dρ at reference temperature T_ref (same δ) ──
-    tau_ref = TC / _T_REF
-    _, alr_d_ref, _, alr_dd_ref, _, _ = _hz.residual_derivs(tau_ref, delta)
-    dp_drho_ref = R_MOLAR * _T_REF * (1.0 + 2.0 * delta * alr_d_ref
-                                        + delta ** 2 * alr_dd_ref)
+    # ── dp/dρ at reference temperature T_ref (same δ; precomputed fit) ──
+    dp_drho_ref = R_MOLAR * _T_REF * _dpdrho_ref_reduced(delta)
     chi_ref = PC / RHOC_MOLAR ** 2 * rho_molar / dp_drho_ref * _T_REF / T
 
     diff = chi - chi_ref

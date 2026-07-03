@@ -14,12 +14,13 @@ Design:
   * The Newton inner loop touches only τ-derivatives (`helmholtz.residual_tau_*`)
     with the δ-dependent envelopes precomputed once (they are loop-invariant at
     fixed ρ) — all u and Cv need at fixed density.
-  * A precomputed (ρ, u) → T₀ table seeds Newton within a fraction of a kelvin,
-    so a short FIXED, unrolled iteration (no `lax.while_loop`) reaches float64
-    round-off.  Fixed iteration keeps the GPU kernel uniform and branchless; the
-    table seed is purely a convergence accelerator (the polish sets accuracy and
-    the IFT JVP sets gradients), so it carries no accuracy or differentiability
-    risk.
+  * A precomputed (ρ, u) → T₀ table (dome-safe, uniform grid) seeds Newton so
+    that a short FIXED, unrolled iteration (no `lax.while_loop`) reaches
+    float64 round-off — measured 8.5e-13 K max over the single-phase envelope
+    at 3 steps.  Fixed iteration keeps the GPU kernel uniform and branchless;
+    the table seed is purely a convergence accelerator (the polish sets
+    accuracy and the IFT JVP sets gradients), so it carries no accuracy or
+    differentiability risk.
   * Gradients use the implicit function theorem via `custom_jvp`, with the
     Jacobian entries (Cv, ∂u/∂ρ) taken analytically — correct jvp and vjp.
 
@@ -39,10 +40,13 @@ from co2_eos.span_wagner import TC, RHOC, R, T_TRIPLE
 from co2_eos import helmholtz as hz
 from co2_eos import transport as _tr
 
-# Fixed Newton iterations for the (ρ, u) → T inversion.  The table seed lands
-# < ~0.5 K from the root across its range; 4 analytic-Newton steps then reach
-# float64 round-off, 5 leaves margin.  (Validated in tests/test_inversion_*.)
-_NEWTON_ITERS = 5
+# Fixed Newton iterations for the (ρ, u) → T inversion.  With the dome-filled
+# 256×512 table seed, 3 analytic-Newton steps reach float64 round-off over the
+# single-phase envelope (measured max 8.5e-13 K on 40k samples incl. the
+# critical neighbourhood; see bench/proto_seed_v2.py and tests).  The affine
+# fallback seed is coarse (±tens of K), so it gets a longer fixed iteration.
+_NEWTON_ITERS_TABLE = 3
+_NEWTON_ITERS_AFFINE = 8
 _T_MIN = T_TRIPLE
 _T_MAX = 800.0
 
@@ -62,30 +66,51 @@ _AFFINE_A, _AFFINE_B = 255.6, 1.656e-4
 _HAVE_SEED = False
 try:
     _seed = np.load(_SEED_PATH)
-    _SEED_RHO = jnp.asarray(_seed["rho_grid"])
-    _SEED_U = jnp.asarray(_seed["u_grid"])
-    _SEED_T0 = jnp.asarray(_seed["T0_table"])
-    _SEED_NRHO = int(_SEED_RHO.shape[0])
-    _SEED_NU = int(_SEED_U.shape[0])
+    # Stored float32 (seed-only precision; halves the embedded-constant
+    # footprint, which XLA:CPU gathers care about).  Kept flat so the four
+    # bilinear corners come from ONE gather of (base + static offsets) —
+    # four separate gather ops cost ~1.3 µs each per call.
+    _SEED_T0_FLAT = jnp.asarray(_seed["T0_table"], dtype=jnp.float32).ravel()
+    _np_rho = np.asarray(_seed["rho_grid"])
+    _np_u = np.asarray(_seed["u_grid"])
+    _SEED_NRHO = int(_np_rho.shape[0])
+    _SEED_NU = int(_np_u.shape[0])
+    # The grids are uniform (linspace) — index by arithmetic, not searchsorted.
+    _SEED_R_LO = float(_np_rho[0])
+    _SEED_R_STEP = float(_np_rho[1] - _np_rho[0])
+    _SEED_U_LO = float(_np_u[0])
+    _SEED_U_STEP = float(_np_u[1] - _np_u[0])
+    for _g, _step in ((_np_rho, _SEED_R_STEP), (_np_u, _SEED_U_STEP)):
+        if not np.allclose(np.diff(_g), _step, rtol=1e-12):
+            raise ValueError("seed table grids must be uniform")
     _HAVE_SEED = True
 except FileNotFoundError:
     pass
 
 
 def _seed_T(rho, u):
-    """Initial T guess for the (ρ, u) inversion via the bilinear table."""
+    """Initial T guess for the (ρ, u) inversion via the bilinear table.
+
+    Uniform-grid direct indexing (the generator writes linspace grids), with
+    the query clamped to the table box — outside it the Newton polish still
+    owns the accuracy, the seed is only a starting point.
+    """
     if not _HAVE_SEED:
         return jnp.clip(_AFFINE_A + _AFFINE_B * u, _T_MIN, _T_MAX)
-    ri = jnp.clip(jnp.searchsorted(_SEED_RHO, rho) - 1, 0, _SEED_NRHO - 2)
-    uj = jnp.clip(jnp.searchsorted(_SEED_U, u) - 1, 0, _SEED_NU - 2)
-    r0, r1 = _SEED_RHO[ri], _SEED_RHO[ri + 1]
-    u0, u1 = _SEED_U[uj], _SEED_U[uj + 1]
-    fr = jnp.clip((rho - r0) / (r1 - r0), 0.0, 1.0)
-    fu = jnp.clip((u - u0) / (u1 - u0), 0.0, 1.0)
-    c00 = _SEED_T0[ri, uj]
-    c01 = _SEED_T0[ri, uj + 1]
-    c10 = _SEED_T0[ri + 1, uj]
-    c11 = _SEED_T0[ri + 1, uj + 1]
+    fi = jnp.clip((rho - _SEED_R_LO) / _SEED_R_STEP, 0.0,
+                  _SEED_NRHO - 1 - 1e-9)
+    fj = jnp.clip((u - _SEED_U_LO) / _SEED_U_STEP, 0.0, _SEED_NU - 1 - 1e-9)
+    ri = fi.astype(jnp.int32)
+    uj = fj.astype(jnp.int32)
+    fr = fi - ri
+    fu = fj - uj
+    base = ri * _SEED_NU + uj
+    corners = _SEED_T0_FLAT[base + jnp.array([0, 1, _SEED_NU, _SEED_NU + 1],
+                                             dtype=jnp.int32)]
+    c00, c01, c10, c11 = (corners[0].astype(jnp.float64),
+                          corners[1].astype(jnp.float64),
+                          corners[2].astype(jnp.float64),
+                          corners[3].astype(jnp.float64))
     return ((c00 * (1.0 - fr) + c10 * fr) * (1.0 - fu)
             + (c01 * (1.0 - fr) + c11 * fr) * fu)
 
@@ -148,22 +173,23 @@ def _solve_T(rho, u):
     """Fixed-iteration Newton solve for T given (ρ, u). Scalar.
 
     δ-invariant envelopes are precomputed once; each step evaluates only the
-    τ-dependent transcendentals.
+    τ-dependent transcendentals.  The short fixed count is unrolled (no loop
+    construct) so XLA fuses the steps and the kernel stays branchless.
     """
     delta = rho / RHOC
     dstate = hz.residual_tau_prep(delta)
     T = _seed_T(rho, u)
+    iters = _NEWTON_ITERS_TABLE if _HAVE_SEED else _NEWTON_ITERS_AFFINE
 
-    def step(_, T):
+    for _ in range(iters):
         tau = TC / T
         a0_t, a0_tt = hz.ideal_tau_only(tau)
         ar_t, ar_tt = hz.residual_tau_fast(tau, dstate)
         f = R * TC * (a0_t + ar_t) - u
         cv = -R * tau ** 2 * (a0_tt + ar_tt)
         cv = jnp.where(jnp.abs(cv) > 1e-30, cv, 1e-30)
-        return jnp.clip(T - f / cv, _T_MIN, _T_MAX)
-
-    return jax.lax.fori_loop(0, _NEWTON_ITERS, step, T)
+        T = jnp.clip(T - f / cv, _T_MIN, _T_MAX)
+    return T
 
 
 # ── Implicit differentiation via custom_jvp ─────────────────────────────────
