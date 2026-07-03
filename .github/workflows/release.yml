@@ -39,12 +39,15 @@ jobs:
       - name: Verify the data tables are in the wheel
         run: |
           unzip -l dist/*.whl | tee /tmp/wheel_contents.txt
-          # Both are runtime dependencies: the saturation table backs the
-          # phase-aware inversions, and the seed table backs the fixed-iteration
-          # (ρ, u) → T Newton (without it the inversion would not converge to the
-          # round-trip tolerance in the configured iteration count).
+          # All three are runtime dependencies: the saturation table backs the
+          # phase-aware inversions, the seed table backs the fixed-iteration
+          # (ρ, u) → T Newton (without it the inversion would not converge to
+          # the round-trip tolerance in the configured iteration count), and
+          # the chi_ref Chebyshev backs the conductivity critical enhancement
+          # (without it transport falls back to the slow exact bundle).
           grep -q "co2_eos/data/saturation_table.npz" /tmp/wheel_contents.txt
           grep -q "co2_eos/data/seed_table.npz" /tmp/wheel_contents.txt
+          grep -q "co2_eos/data/chi_ref_cheb.npz" /tmp/wheel_contents.txt
 
       - uses: actions/upload-artifact@v4
         with:
