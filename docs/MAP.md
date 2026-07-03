@@ -48,6 +48,61 @@ _Profile INSIDE properties_from_rho_u: where the per-eval microseconds go._
 - newton_convergence(n=20000, seed=7)  ·L114 — |T_k - T_true| percentiles after k fixed Newton steps from the table seed.
 - main()  ·L144
 
+### bench/proto_chebsurf.py
+_Prototype D probe: can a tensor-Chebyshev surface replace the residual sum?_
+- const C  ·L29
+- cheb_nodes(n, lo, hi)  ·L32
+- alphar_parts(tau, delta)  ·L37 — (full alpha_r, smooth part = poly+exp+gauss only) and their tt/dd.
+- fit_and_test(values_fn, label, degrees=(20, 40, 60, 80))  ·L61
+- main()  ·L107
+
+### bench/proto_econ.py
+_Prototype A/B: transcendental-economized Span-Wagner kernels, measured._
+- const _N  ·L41
+- const _D  ·L42
+- const _T  ·L43
+- const _L  ·L44
+- const _GN  ·L46
+- const _GD  ·L47
+- const _GT  ·L48
+- const _GETA  ·L49
+- const _GBETA  ·L50
+- const _GGAMMA  ·L51
+- const _GEPS  ·L52
+- const _NAN_  ·L54
+- const _NAA  ·L55
+- const _NAB  ·L56
+- const _NA_P  ·L57
+- const _NA_BIGA  ·L59
+- const _NA_BIGB  ·L60
+- const _NA_BIGC  ·L61
+- const _NA_BIGD  ·L62
+- const _TPOWS  ·L70
+- _tau_ladder(tau)  ·L75 — All distinct tau^t (t in _TPOWS) via 2 sqrts + multiplies.
+- _delta_ladder(delta, dmax)  ·L109 — delta^1..dmax by successive multiplication (dict of int -> value).
+- residual_derivs_econ(tau, delta)  ·L121 — (ar, ar_d, ar_t, ar_dd, ar_tt, ar_dt) — exact SW96, economized.
+- const _TPOLY  ·L264
+- const _TP_IDX  ·L265
+- const _W_T  ·L266
+- const _W_TT  ·L267
+- residual_tau_prep_econ(delta)  ·L270 — delta-invariant state for the tau-only inner loop (economized).
+- residual_tau_fast_econ(tau, dstate)  ·L299 — (ar_t, ar_tt) from precomputed delta-state — economized per-iteration.
+- const _TAU_REF  ·L373
+- _dpdrho_ref_exact(delta)  ·L377
+- fit_chi_ref_cheb(deg)  ·L382
+- chi_ref_cheb(delta, coefs)  ·L391 — Clenshaw evaluation of the fitted dp/drho|_(T_ref) factor.
+- _grid(n=300)  ·L405 — (tau, delta) covering envelope + margins incl. tight near-critical.
+- time_call(fn, *args, repeat=200)  ·L421
+- main()  ·L432
+
+### bench/proto_seed_v2.py
+_Prototype C: seed-table v2 — dome-safe fill + denser grid -> fewer iters._
+- const NU  ·L34
+- build_v2()  ·L37
+- make_seed_fn(rho_grid, u_grid, T0)  ·L77
+- conv_stats(seed_fn, label, n=40000)  ·L98
+- main()  ·L128
+
 ### bench/seed_study.py
 _Pick the (ρ, u) → T Newton seed: compare seed error and iteration counts._
 - make_points(Tlo, Thi, rlo, rhi, n=2000, seed=0)  ·L23
