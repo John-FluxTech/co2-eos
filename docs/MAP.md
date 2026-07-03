@@ -34,6 +34,20 @@ _Baseline profiling of the co2-eos hot path (pre-redesign)._
 - newton_iteration_counts(T, rho, u)  ·L117
 - main()  ·L121
 
+### bench/profile_hotpath.py
+_Profile INSIDE properties_from_rho_u: where the per-eval microseconds go._
+- const NS  ·L44
+- const REPEAT  ·L45
+- envelope(n, seed=0)  ·L51 — (T, rho, u) sampled uniformly in the consumers' operating box.
+- time_call(fn, *args, repeat=REPEAT)  ·L60 — Compile + warm up, then median seconds/call over `repeat` runs.
+- @jax.jit f_bundle(tau, delta)  ·L83
+- const _TAU_REF  ·L87
+- @jax.jit f_chi_ref(delta)  ·L91 — Exactly the extra Helmholtz work the critical enhancement does.
+- const _OPS  ·L98
+- hlo_census(fn, *args)  ·L102 — Count transcendental-ish ops in the optimized HLO of fn(*args).
+- newton_convergence(n=20000, seed=7)  ·L114 — |T_k - T_true| percentiles after k fixed Newton steps from the table seed.
+- main()  ·L144
+
 ### bench/seed_study.py
 _Pick the (ρ, u) → T Newton seed: compare seed error and iteration counts._
 - make_points(Tlo, Thi, rlo, rhi, n=2000, seed=0)  ·L23
