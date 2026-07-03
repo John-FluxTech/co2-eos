@@ -52,7 +52,7 @@ import jax.numpy as jnp
 # Enable float64 for the entire library (also done by submodules).
 jax.config.update("jax_enable_x64", True)
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 # ── Phase hint constants ────────────────────────────────────────────────────
 LIQUID = 0

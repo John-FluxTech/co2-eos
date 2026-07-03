@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "co2-eos"
-version = "0.2.0"
+version = "0.3.0"
 description = "Differentiable CO₂ thermodynamic properties in JAX"
 readme = "README.md"
 license = "Apache-2.0"
