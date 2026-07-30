@@ -1,0 +1,31 @@
+JAX 0.10.2  device=cuda:0 (platform=gpu)  x64=True
+
+     N |       full     newton       seed state_Trho     thermo     bundle       visc    chi_ref   (us/call)
+------------------------------------------------------------------------------------------------------------
+    64 |      245.8      133.9      128.1      161.3      216.2      141.3      135.5      122.0
+   128 |      294.2      134.8      126.1      186.4      280.6      127.0      115.9      144.4
+   256 |      295.3      136.6      133.7      177.3      204.1      130.6      139.7      123.0
+  1024 |      296.0      168.4      139.4      184.1      234.4      135.6      139.5      121.7
+
+Split at N=64 (of 245.8 us total):
+  newton (seed + 5 fixed iters)               133.9 us  ( 54.5%)
+    of which seed table                       128.1 us  ( 52.1%)
+  thermo bundle (residual+ideal+props)        216.2 us  ( 88.0%)
+  transport (visc + conductivity)             -54.9 us  (-22.3%)
+    of which chi_ref reference bundle         122.0 us  ( 49.6%)
+  unattributed (dispatch, dict, misc)         -49.4 us  (-20.1%)
+
+HLO transcendental census (per batch call):
+  properties_from_rho_u N=64       power=9  exponential=61  log=3  sqrt=34  rsqrt=1  atan2=1  tanh=0  cbrt=0  divide=63   [transcendental lines=109]
+  temperature_from_rho_u N=64      power=4  exponential=48  log=0  sqrt=24  rsqrt=0  atan2=0  tanh=0  cbrt=0  divide=37   [transcendental lines=76]
+  state_from_T_rho N=64            power=7  exponential=18  log=3  sqrt=11  rsqrt=1  atan2=1  tanh=0  cbrt=0  divide=29   [transcendental lines=41]
+
+Newton |T_k - T*| from shipped seed table (20k envelope points):
+  k=0:  max=5.785e+00  p99=4.812e+00  p50=7.827e-04  [K]
+  k=1:  max=2.066e+01  p99=3.893e+00  p50=1.373e-09  [K]
+  k=2:  max=1.441e+01  p99=1.851e+00  p50=5.684e-14  [K]
+  k=3:  max=1.033e+01  p99=5.416e-01  p50=5.684e-14  [K]
+  k=4:  max=6.997e+00  p99=5.609e-02  p50=5.684e-14  [K]
+  k=5:  max=4.204e+00  p99=6.495e-04  p50=5.684e-14  [K]
+
+Wrote /home/ubuntu/bench-out/profile_hotpath_gpu_econ.json
